@@ -22,7 +22,7 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 500
+BATCH_SIZE = 512
 MAX_RETRIES = 3
 DEFAULT_ENCODING = "utf-8"
 FIELD_SEPARATOR = "|"

@@ -15,7 +15,11 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html { color-scheme: dark; }
+/*
+ * Vertical swipes scroll; horizontal swipes keep the pointer stream alive so
+ * touch users can paint (see brush.js). Nothing on the page scrolls sideways.
+ */
+html { color-scheme: dark; touch-action: pan-y pinch-zoom; }
 
 body {
   margin: 0;

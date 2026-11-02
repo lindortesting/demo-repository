@@ -14,28 +14,46 @@ import (
 //
 //	crc32(4) | op(1) | keyLen(4) | valLen(4) | key | value
 //
-// The CRC covers everything after itself. A record that fails to decode or
-// whose CRC mismatches is treated as a torn tail: replay stops there and the
-// file is truncated to the last good record, so later appends never follow
-// garbage.
+// The CRC covers everything after itself. Ops: 1=put, 2=delete, 3=touch (a
+// Get hit's recency refresh — logging it is what lets replay restore the
+// exact cache state, eviction decisions included). A record that fails to
+// decode or whose CRC mismatches is treated as a torn tail: replay stops
+// there and the file is truncated to the last good record, so later appends
+// never follow garbage.
 const (
 	opPut    byte = 1
 	opDelete byte = 2
+	opTouch  byte = 3
 
 	headerSize = 4 + 1 + 4 + 4
+
+	// maxLen is the largest legal key or value: lengths frame as uint32.
+	maxLen = 1<<32 - 1
 )
 
 // errTrunc marks a torn or corrupt WAL tail; replay truncates at the last
 // good record instead of failing.
 var errTrunc = errors.New("kv: wal torn or corrupt tail")
 
+// walFile is the WAL's storage seam: *os.File in production, fault injectors
+// in tests.
+type walFile interface {
+	Write(p []byte) (int, error)
+	ReadAt(p []byte, off int64) (int, error)
+	Truncate(size int64) error
+	Sync() error
+	Close() error
+	Stat() (os.FileInfo, error)
+}
+
 // Store is a thread-safe string key-value cache: a fixed-capacity LRU in
 // front of an append-only write-ahead log. Call Open to create one.
 type Store struct {
 	mu   sync.Mutex
 	lru  *lru
-	wal  *os.File
+	wal  walFile
 	size int64 // end of the last good WAL record
+	err  error // sticky: set when a partial record could not be rolled back
 }
 
 // Open opens (creating if necessary) the WAL at path, replays it into a
@@ -56,12 +74,22 @@ func Open(path string, capacity int) (*Store, error) {
 	return s, nil
 }
 
-// Get returns the value for key, or ok=false, and marks it most recently
-// used. The recency change is in-memory only; it is not recovered.
-func (s *Store) Get(key string) (value string, ok bool) {
+// Get returns the value for key. A hit is a recency change, so it is
+// appended to the WAL (opTouch) before it is applied — that is what lets
+// replay restore the exact cache state, but it means a hit costs one append
+// and can report an error where a pure in-memory cache would not. A miss
+// changes nothing and does no I/O.
+func (s *Store) Get(key string) (value string, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lru.get(key)
+	if !s.lru.has(key) {
+		return "", false, nil
+	}
+	if err := s.append(opTouch, key, ""); err != nil {
+		return "", false, err
+	}
+	v, _ := s.lru.get(key)
+	return v, true, nil
 }
 
 // Put inserts or updates key. The write is appended to the WAL before the
@@ -105,17 +133,26 @@ func (s *Store) Sync() error {
 	return s.wal.Sync()
 }
 
-// Close closes the WAL. The in-memory cache stays readable via Get; Put and
-// Delete fail afterwards.
+// Close closes the WAL. Afterwards Put, Delete, and Get hits fail; Get
+// misses still report absence, and Len keeps working.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.wal.Close()
 }
 
-// append writes one record to the end of the WAL. On failure the file is
-// truncated back to the last good record so no partial record survives.
+// append writes one record to the end of the WAL. If the write fails, the
+// partial record is rolled back; if the rollback itself fails, the store is
+// marked broken and rejects every further mutation until it is closed and
+// reopened — acknowledging writes that recovery would silently discard is
+// worse than refusing them.
 func (s *Store) append(op byte, key, value string) error {
+	if s.err != nil {
+		return s.err
+	}
+	if uint64(len(key)) > maxLen || uint64(len(value)) > maxLen {
+		return fmt.Errorf("kv: key and value must be at most %d bytes, got %d and %d", maxLen, len(key), len(value))
+	}
 	buf := make([]byte, headerSize+len(key)+len(value))
 	buf[4] = op
 	binary.LittleEndian.PutUint32(buf[5:], uint32(len(key)))
@@ -124,7 +161,9 @@ func (s *Store) append(op byte, key, value string) error {
 	copy(buf[headerSize+len(key):], value)
 	binary.LittleEndian.PutUint32(buf, crc32.ChecksumIEEE(buf[4:]))
 	if _, err := s.wal.Write(buf); err != nil {
-		s.wal.Truncate(s.size) // drop a possibly partial record
+		if rerr := s.wal.Truncate(s.size); rerr != nil {
+			s.err = errors.Join(err, fmt.Errorf("kv: rollback of a partial WAL record failed; store rejects mutations until closed and reopened: %w", rerr))
+		}
 		return err
 	}
 	s.size += int64(len(buf))
@@ -184,6 +223,8 @@ func (s *Store) replayOne(hdr []byte, fileSize int64) (int64, error) {
 	switch key := string(payload[:klen]); hdr[4] {
 	case opPut:
 		s.lru.put(key, string(payload[klen:]))
+	case opTouch:
+		s.lru.get(key)
 	case opDelete:
 		s.lru.delete(key)
 	default:

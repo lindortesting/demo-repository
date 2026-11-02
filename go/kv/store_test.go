@@ -33,15 +33,16 @@ func mustPut(t *testing.T, s *kv.Store, key, value string) {
 
 func mustGet(t *testing.T, s *kv.Store, key, want string) {
 	t.Helper()
-	if v, ok := s.Get(key); !ok || v != want {
-		t.Fatalf("Get(%q) = %q, %v; want %q, true", key, v, ok, want)
+	v, ok, err := s.Get(key)
+	if err != nil || !ok || v != want {
+		t.Fatalf("Get(%q) = %q, %v, %v; want %q, true, nil", key, v, ok, err, want)
 	}
 }
 
 func mustMiss(t *testing.T, s *kv.Store, key string) {
 	t.Helper()
-	if v, ok := s.Get(key); ok {
-		t.Fatalf("Get(%q) = %q, true; want miss", key, v)
+	if v, ok, err := s.Get(key); err != nil || ok {
+		t.Fatalf("Get(%q) = %q, %v, %v; want miss with nil error", key, v, ok, err)
 	}
 }
 
@@ -151,19 +152,20 @@ func TestStoreRecoveryReplaysEviction(t *testing.T) {
 	mustGet(t, s, "c", "3")
 }
 
-// Requirement: reads are never logged, so after recovery the recency order
-// is write order. This test pins that documented semantic: live, the Get
-// would have protected "a"; after a restart it does not.
-func TestStoreRecencyAfterRecoveryIsWriteOrder(t *testing.T) {
+// Requirement: replay restores recency exactly, because Get hits are logged
+// as touch records. This is the reviewer's scenario: live, the Get protects
+// "a" from eviction; after a restart it must still be protected, and the
+// same key must be evicted as would have been without the restart.
+func TestStoreRecencySurvivesRecovery(t *testing.T) {
 	s, path := openStore(t, 2)
 	mustPut(t, s, "a", "1")
 	mustPut(t, s, "b", "2")
-	mustGet(t, s, "a", "1") // live: makes "a" most recently used
+	mustGet(t, s, "a", "1") // touch: "a" becomes most recently used, and the WAL knows
 
 	s = reopen(t, s, path, 2)
-	mustPut(t, s, "c", "3") // evicts the least recently WRITTEN key: "a"
-	mustMiss(t, s, "a")
-	mustGet(t, s, "b", "2")
+	mustPut(t, s, "c", "3") // must evict "b", exactly as the live cache would
+	mustGet(t, s, "a", "1")
+	mustMiss(t, s, "b")
 	mustGet(t, s, "c", "3")
 }
 
@@ -217,9 +219,8 @@ func TestStoreTornTailTruncated(t *testing.T) {
 		t.Fatalf("Open with torn tail: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	mustGet(t, s2, "a", "1")
-	mustGet(t, s2, "b", "2")
 
+	// Stat before any Get: hits append touch records and grow the file.
 	fi2, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
@@ -227,6 +228,8 @@ func TestStoreTornTailTruncated(t *testing.T) {
 	if fi2.Size() != fi.Size() {
 		t.Fatalf("torn tail not truncated: size %d; want %d", fi2.Size(), fi.Size())
 	}
+	mustGet(t, s2, "a", "1")
+	mustGet(t, s2, "b", "2")
 
 	// Appends after recovery must follow the last good record, not the garbage.
 	mustPut(t, s2, "c", "3")
@@ -263,10 +266,8 @@ func TestStoreCorruptMiddleRecordDropsTail(t *testing.T) {
 		t.Fatalf("Open with corrupt record: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	mustGet(t, s2, "a", "1")
-	mustMiss(t, s2, "b")
-	mustMiss(t, s2, "c")
 
+	// Stat before any Get: hits append touch records and grow the file.
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
@@ -274,10 +275,14 @@ func TestStoreCorruptMiddleRecordDropsTail(t *testing.T) {
 	if fi.Size() != 15 {
 		t.Fatalf("size after truncation = %d; want 15 (one record)", fi.Size())
 	}
+	mustGet(t, s2, "a", "1")
+	mustMiss(t, s2, "b")
+	mustMiss(t, s2, "c")
 }
 
 // Requirement: after Close, mutations fail loudly instead of pretending to
-// persist; the in-memory cache remains readable for draining.
+// persist. Get hits fail too (the recency touch cannot be logged); Get
+// misses still report absence.
 func TestStorePutAfterClose(t *testing.T) {
 	s, path := openStore(t, 8)
 	mustPut(t, s, "a", "1")
@@ -290,7 +295,10 @@ func TestStorePutAfterClose(t *testing.T) {
 	if err := s.Delete("a"); err == nil {
 		t.Fatal("Delete after Close succeeded; want error")
 	}
-	mustGet(t, s, "a", "1")
+	if _, ok, err := s.Get("a"); err == nil || ok {
+		t.Fatalf("Get hit after Close = _, %v, %v; want miss with error", ok, err)
+	}
+	mustMiss(t, s, "ghost")
 
 	// The failed mutations must not have reached the log.
 	s2, err := kv.Open(path, 8)
@@ -319,6 +327,46 @@ func TestStoreLargeValueRoundTrip(t *testing.T) {
 	mustPut(t, s, "big", big)
 	s = reopen(t, s, path, 4)
 	mustGet(t, s, "big", big)
+}
+
+// Requirement: a Get miss changes nothing and must not append to the WAL —
+// otherwise read-heavy workloads on absent keys would bloat the log. Only
+// hits pay for a touch record.
+func TestStoreGetMissWritesNothing(t *testing.T) {
+	s, path := openStore(t, 8)
+	mustPut(t, s, "a", "1")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	mustMiss(t, s, "ghost")
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if fi2.Size() != fi.Size() {
+		t.Fatalf("WAL grew on a Get miss: %d -> %d", fi.Size(), fi2.Size())
+	}
+}
+
+// Requirement: a Get hit logs a touch record, so the WAL grows — the price
+// of exact recency recovery. This pins the contract so the cost is
+// deliberate, not accidental.
+func TestStoreGetHitAppendsTouch(t *testing.T) {
+	s, path := openStore(t, 8)
+	mustPut(t, s, "a", "1")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	mustGet(t, s, "a", "1")
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if fi2.Size() <= fi.Size() {
+		t.Fatalf("WAL did not grow on a Get hit: %d -> %d", fi.Size(), fi2.Size())
+	}
 }
 
 // Requirement: Sync flushes the WAL and reports no error in normal operation.
@@ -370,8 +418,8 @@ func TestStoreConcurrent(t *testing.T) {
 		for g := 0; g < workers; g++ {
 			for i := 0; i < keysPerWorker; i++ {
 				key := fmt.Sprintf("w%d-k%d", g, i)
-				if v, ok := s.Get(key); !ok || v != strconv.Itoa(g) {
-					t.Fatalf("Get(%q) = %q, %v; want %q, true", key, v, ok, strconv.Itoa(g))
+				if v, ok, err := s.Get(key); err != nil || !ok || v != strconv.Itoa(g) {
+					t.Fatalf("Get(%q) = %q, %v, %v; want %q, true, nil", key, v, ok, err, strconv.Itoa(g))
 				}
 			}
 		}
@@ -402,7 +450,8 @@ func BenchmarkStorePut(b *testing.B) {
 	}
 }
 
-// Benchmark: cache-hit Get cost on a preloaded store.
+// Benchmark: cache-hit Get cost on a preloaded store — one WAL touch append
+// plus one LRU lookup, the price of exact recency recovery.
 func BenchmarkStoreGet(b *testing.B) {
 	const n = 10000
 	s := newBenchStore(b, n)
@@ -413,8 +462,8 @@ func BenchmarkStoreGet(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := s.Get(strconv.Itoa(i % n)); !ok {
-			b.Fatal("unexpected miss")
+		if _, ok, err := s.Get(strconv.Itoa(i % n)); err != nil || !ok {
+			b.Fatalf("Get: ok=%v err=%v", ok, err)
 		}
 	}
 }

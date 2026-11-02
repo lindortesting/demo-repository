@@ -11,7 +11,8 @@
 // survives a process crash. Surviving a power loss requires flushing the OS
 // page cache; call Sync when that guarantee is needed.
 //
-// Recovery semantics: the key-value contents are recovered exactly. Recency
-// order after recovery reflects the order of writes, because reads are never
-// logged.
+// Recovery semantics: replay restores the exact cache state — contents and
+// recency — because every state change is appended to the WAL before it is
+// applied, including the recency refresh from a Get hit. The cost is that a
+// cache hit performs one WAL append; a miss does no I/O.
 package kv

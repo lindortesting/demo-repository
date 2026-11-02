@@ -1,0 +1,9 @@
+{
+  "name": "pumpkin-dodge",
+  "private": true,
+  "type": "module",
+  "description": "Pumpkin Dodge: zero-dependency canvas game. Pure rules in logic.js, renderer in game.js.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

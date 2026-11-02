@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pumpkin Dodge</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>Pumpkin Dodge</h1>
+    <p class="tagline">Catch the pumpkins. Dodge the rocks.</p>
+
+    <div class="hud">
+      <span>Score <strong id="score">0</strong></span>
+      <span>Lives <strong id="lives"></strong></span>
+    </div>
+
+    <div class="stage">
+      <canvas id="game" aria-label="Pumpkin Dodge play field"></canvas>
+      <div id="overlay" class="overlay" hidden>
+        <h2>Game Over</h2>
+        <p>Final score: <strong id="final-score">0</strong></p>
+        <button id="restart" type="button">Play again</button>
+      </div>
+    </div>
+
+    <p class="hint">Move the basket with the &larr; and &rarr; arrow keys</p>
+  </main>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

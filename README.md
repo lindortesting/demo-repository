@@ -11,3 +11,7 @@ The repo includes an `index.html` file (so it can render a web page), two GitHub
 - `assets/brush.js` — brush cursor + pumpkin particles (reuses the `#pumpkin` / `#face-*` SVG symbols in `index.html`; honours `prefers-reduced-motion`).
 
 No build step. Preview locally with `python3 -m http.server` and open http://localhost:8000.
+
+## Pumpkin Dodge
+
+`games/pumpkin-dodge/` is a small canvas game: catch falling pumpkins in a basket, dodge rocks. Plain HTML/CSS/JS, no build step, no dependencies. The game rules live in a DOM-free `logic.js` and are covered by `node --test` — see its [README](games/pumpkin-dodge/README.md).

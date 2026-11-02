@@ -6,6 +6,7 @@ Public API:
 """
 
 import re
+import unicodedata
 
 # ---------- Word / number tokens ------------------------------------
 
@@ -28,8 +29,13 @@ _TOKEN = re.compile(rf"(?:{_WORD.pattern})|(?:{_NUMBER.pattern})", re.UNICODE)
 
 
 def tokenize_words(text: str) -> list[str]:
-    """Return the word and number tokens of ``text`` in order."""
-    return _TOKEN.findall(text)
+    """Return the word and number tokens of ``text`` in order.
+
+    ``text`` is first normalized to Unicode NFC so a single word
+    composed in NFD (``'nai\u0308ve'`` rather than ``'na\u00efve'``)
+    still tokenizes as one word.
+    """
+    return _TOKEN.findall(unicodedata.normalize("NFC", text))
 
 
 # ---------- Sentence tokenization ------------------------------------
@@ -69,10 +75,13 @@ def tokenize_sentences(text: str) -> list[str]:
     while i < n:
         if text[i] in _SENTENCE_END:
             preceding = _word_at(text, i - 1, start)
-            if preceding.lower() in _ABBREVIATIONS:
-                i += 1
-                continue
-            if len(preceding) == 1 and preceding.isupper():
+            if (
+                text[i] == "."
+                and (
+                    preceding.lower() in _ABBREVIATIONS
+                    or (len(preceding) == 1 and preceding.isupper())
+                )
+            ):
                 i += 1
                 continue
             j = i + 1

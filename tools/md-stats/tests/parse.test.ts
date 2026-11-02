@@ -141,4 +141,49 @@ describe("parseMarkdown", () => {
       expect(parseMarkdown(empty)).toEqual({ words: 0, headings: zeros(), links: 0, codeBlocks: 0 });
     }
   });
+
+  it("ends a fence opened inside a blockquote when the quote ends", () => {
+    // Regression: the quote-stripping erased the container, so an unclosed
+    // fence inside a blockquote swallowed every line after the quote.
+    const s = parseMarkdown("> ```\n> code\n\n# Outside\n[text](/url)");
+    expect(s).toEqual({
+      words: 2,
+      headings: { ...zeros(), h1: 1 },
+      links: 1,
+      codeBlocks: 1,
+    });
+    const closed = parseMarkdown("> ```\n> c\n> ```\n\n# Out");
+    expect(closed.headings.h1).toBe(1);
+    expect(closed.codeBlocks).toBe(1);
+  });
+
+  it("counts links over whole paragraphs, so code spans shield URLs across line breaks", () => {
+    // Regression: code spans were stripped per line, letting a URL inside a
+    // span that opens and closes on different lines leak into the count.
+    expect(parseMarkdown("`code\nhttp://a.example\nend`").links).toBe(0);
+    // An unclosed span is literal text, so its URL is a bare link.
+    expect(parseMarkdown("see `code http://x").links).toBe(1);
+  });
+
+  it("does not let a link definition turn a following === into a heading", () => {
+    // Regression: definition lines set paragraph state, so a setext
+    // underline after one counted as a heading. CommonMark renders the
+    // underline as a plain paragraph.
+    const s = parseMarkdown("[foo]: /url\n===");
+    expect(s.headings).toEqual(zeros());
+    expect(s.words).toBe(3); // "[foo]:" + "/url" + "==="
+  });
+
+  it("counts an autolink inside brackets when no reference definition matches", () => {
+    // Regression: unresolved bracket groups were removed before autolink
+    // detection, so [<http://a.example>] lost its link.
+    expect(parseMarkdown("[<http://a.example>]").links).toBe(1);
+  });
+
+  it("does not close a short code span with a longer backtick run", () => {
+    // Regression: the span regex let a 1-backtick opener match the first
+    // backtick of a 2-backtick run, wrongly swallowing the URL.
+    expect(parseMarkdown("`http://a.example``").links).toBe(1);
+    expect(parseMarkdown("`` ` `` http://x").links).toBe(1);
+  });
 });

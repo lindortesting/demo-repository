@@ -10,13 +10,21 @@
  *   items and inline code count; fenced code blocks and YAML frontmatter
  *   do not.
  * - Headings: ATX (`#`..`######`, with optional closing hash run) and setext
- *   (`===` / `---` underline after a paragraph), also inside blockquotes.
+ *   (`===` / `---` underline after a paragraph) headings, also inside
+ *   blockquotes. Link-reference definitions are not paragraphs, so an
+ *   underline after one is prose.
  * - Links: inline, full/collapsed/shortcut references (only when a matching
- *   definition exists), `<...>` autolinks, and GFM bare URLs. Images, link
+ *   definition exists), `<...>` autolinks, and GFM bare URLs. Links are
+ *   counted over whole paragraphs, so a code span that opens and closes on
+ *   different lines still shields its contents, and an unclosed code span
+ *   is literal text. Unresolved bracket groups stay in the text, keeping
+ *   autolinks inside them (e.g. `[<http://…>]`) countable. Images, link
  *   definitions, and anything inside code spans or fences are not links.
- * - Code blocks: fenced blocks only (``` or ~~~), including unterminated
- *   fences. A fence closes only on a run of the same character at least as
- *   long as the opener.
+ * - Code blocks: fenced blocks only (``` or ~~~), including fences the file
+ *   never closes. A fence closes only on a run of the same character at
+ *   least as long as the opener — and only inside the container (quoted or
+ *   not) that opened it; a fence opened inside a blockquote ends when the
+ *   blockquote does.
  */
 
 export interface HeadingCounts {
@@ -42,7 +50,15 @@ interface Fence {
   length: number;
 }
 
-const CODE_SPAN = /(`+)(.*?)\1/g;
+/** Fence bookkeeping shared by both passes; `quoted` records the blockquote
+ *  container the active fence was opened in. */
+interface FenceState {
+  fence: Fence | null;
+  quoted: boolean;
+}
+
+const QUOTE_MARK = /^ {0,3}>/;
+const SPAN_RUN = /(?<!`)(`+)(?!`)/g;
 const IMAGE =
   /!\[((?:[^[\]]|\[[^[\]]*\])*)\](?:\((?:[^()]|\([^()]*\))*\)|\[((?:[^[\]]|\[[^[\]]*\])*)\])?/g;
 const INLINE_LINK = /\[((?:[^[\]]|\[[^[\]]*\])*)\]\((?:[^()]|\([^()]*\))*\)/g;
@@ -72,6 +88,33 @@ function closeFence(line: string, fence: Fence): boolean {
   return marker.charAt(0) === fence.char && marker.length >= fence.length;
 }
 
+/**
+ * One line of fence bookkeeping, shared by both passes. Classifies a line
+ * as "opened" (it starts a fence), "inside" (it belongs to an open fence,
+ * including the line that closes it), or "text". A fence closes only on a
+ * closing line in the same container that opened it; when a fence opened
+ * inside a blockquote and the quote ends, the fence ends too and the
+ * boundary line is regular text.
+ */
+function classify(raw: string, line: string, state: FenceState): "inside" | "opened" | "text" {
+  const quoted = QUOTE_MARK.test(raw);
+  if (state.fence) {
+    if (quoted === state.quoted && closeFence(line, state.fence)) {
+      state.fence = null;
+      return "inside";
+    }
+    if (state.quoted && !quoted) state.fence = null;
+    else return "inside";
+  }
+  const open = openFence(line);
+  if (open) {
+    state.fence = open;
+    state.quoted = quoted;
+    return "opened";
+  }
+  return "text";
+}
+
 /** Line index where YAML frontmatter ends, or 0 if there is none. */
 function frontmatterEnd(lines: string[]): number {
   if ((lines[0] ?? "").trimEnd() !== "---") return 0;
@@ -83,18 +126,11 @@ function frontmatterEnd(lines: string[]): number {
 
 function collectDefinitions(lines: string[], body: number): Set<string> {
   const defs = new Set<string>();
-  let fence: Fence | null = null;
+  const state: FenceState = { fence: null, quoted: false };
   for (let i = body; i < lines.length; i++) {
-    const line = stripQuote(lines[i] ?? "");
-    if (fence) {
-      if (closeFence(line, fence)) fence = null;
-      continue;
-    }
-    const open = openFence(line);
-    if (open) {
-      fence = open;
-      continue;
-    }
+    const raw = lines[i] ?? "";
+    const line = stripQuote(raw);
+    if (classify(raw, line, state) !== "text") continue;
     const label = norm(DEFINITION.exec(line)?.[1] ?? "");
     if (label) defs.add(label);
   }
@@ -110,17 +146,49 @@ function countMatches(text: string, re: RegExp): number {
   return [...text.matchAll(re)].length;
 }
 
+/**
+ * Replace closed inline code spans with a space. An opening run of N
+ * backticks closes only on a maximal run of exactly N — a longer run does
+ * not close a shorter opener — and an opener without any closer is literal
+ * text, so calls are safe per block with no state carried between them.
+ */
+function stripCodeSpans(text: string): string {
+  const runs = [...text.matchAll(SPAN_RUN)].map((m) => ({
+    at: m.index ?? 0,
+    ticks: m[1]?.length ?? 0,
+  }));
+  let out = "";
+  let cursor = 0;
+  let i = 0;
+  while (i < runs.length) {
+    const opener = runs[i];
+    if (!opener) break;
+    const close = runs.findIndex((r, j) => j > i && r.ticks === opener.ticks);
+    if (close === -1) {
+      i++;
+      continue;
+    }
+    out += text.slice(cursor, opener.at) + " ";
+    cursor = (runs[close]?.at ?? 0) + opener.ticks;
+    i = close + 1;
+  }
+  return out + text.slice(cursor);
+}
+
 function countLinks(text: string, defs: Set<string>): number {
-  let t = text.replace(CODE_SPAN, " ").replace(IMAGE, " ");
+  let t = stripCodeSpans(text).replace(IMAGE, " ");
   let count = countMatches(t, INLINE_LINK);
   t = t.replaceAll(INLINE_LINK, " ");
-  for (const m of t.matchAll(REFERENCE)) {
-    const ref = norm(m[1] ?? "");
-    const label = m[2] === undefined ? ref : norm(m[2]);
-    if (defs.has(label) || (m[2] !== undefined && defs.has(ref))) count++;
-  }
-  t = t.replaceAll(REFERENCE, " ");
-  count += countMatches(t, AUTOLINK);
+  let refs = 0;
+  t = t.replace(REFERENCE, (match, label: string, ref: string | undefined) => {
+    const name = norm(label);
+    const defined =
+      ref === undefined ? defs.has(name) : defs.has(norm(ref)) || defs.has(name);
+    if (!defined) return match; // stays literal: autolinks inside remain countable
+    refs++;
+    return " ";
+  });
+  count += refs + countMatches(t, AUTOLINK);
   return count + countMatches(t.replaceAll(AUTOLINK, " "), BARE_URL);
 }
 
@@ -140,47 +208,52 @@ export function parseMarkdown(source: string): MarkdownStats {
     codeBlocks: 0,
     headings: { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0 },
   };
-  let fence: Fence | null = null;
-  let paragraph = false;
-  for (let i = body; i < lines.length; i++) {
-    const line = stripQuote(lines[i] ?? "");
-    if (fence) {
-      if (closeFence(line, fence)) fence = null;
-      continue;
+  const state: FenceState = { fence: null, quoted: false };
+  // Prose lines accumulate until the paragraph ends, then yield their links
+  // as one text: inline constructs may span the paragraph's soft breaks.
+  let buffer: string[] = [];
+  const flush = (): void => {
+    if (buffer.length > 0) {
+      stats.links += countLinks(buffer.join("\n"), defs);
+      buffer = [];
     }
-    const open = openFence(line);
-    if (open) {
-      fence = open;
-      stats.codeBlocks++;
-      paragraph = false;
+  };
+  for (let i = body; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    const line = stripQuote(raw);
+    const kind = classify(raw, line, state);
+    if (kind !== "text") {
+      flush();
+      if (kind === "opened") stats.codeBlocks++;
       continue;
     }
     if (!line.trim()) {
-      paragraph = false;
+      flush();
       continue;
     }
     const atx = ATX.exec(line);
     if (atx) {
+      flush();
       const text = headingText(atx[2] ?? "");
       const level = (atx[1] ?? "").length as Level;
       stats.words += countWords(text);
       stats.links += countLinks(text, defs);
       stats.headings[`h${level}`]++;
-      paragraph = false;
       continue;
     }
-    if (paragraph && SETEXT.test(line)) {
+    if (buffer.length > 0 && SETEXT.test(line)) {
+      flush();
       stats.headings[line.trim().startsWith("=") ? "h1" : "h2"]++;
-      paragraph = false;
       continue;
     }
     if (THEMATIC.test(line)) {
-      paragraph = false;
+      flush();
       continue;
     }
     stats.words += countWords(line);
-    if (!DEFINITION.test(line)) stats.links += countLinks(line, defs);
-    paragraph = true;
+    if (DEFINITION.test(line)) flush(); // a definition is its own block, not a paragraph
+    else buffer.push(line);
   }
+  flush();
   return stats;
 }

@@ -76,19 +76,25 @@ A missing path or a missing argument prints an error to stderr and exits 1.
   and fenced code blocks do not.
 - **Headings** — ATX (`#`..`######`, optional closing hash run) and setext
   (`===`/`---` underline after a paragraph) headings, also inside
-  blockquotes. `#######` (seven hashes) and `#NoSpace` are prose, and `---`
-  after a blank line is a thematic break, not a heading.
+  blockquotes. `#######` (seven hashes) and `#NoSpace` are prose, `---` after
+  a blank line is a thematic break, and a link-reference definition is not a
+  paragraph, so `===` right after one is prose too.
 - **Links** — what GitHub would render as a hyperlink: inline
   `[text](url)`, full/collapsed/shortcut references (only when a matching
   `[label]: url` definition exists), `<http://…>` autolinks, and bare
-  `http(s)://`/`ftp://`/`www.` URLs. Images (`![alt](src)`), link
-  definitions themselves, and anything inside code spans or fences are not
-  links.
+  `http(s)://`/`ftp://`/`www.` URLs. Links are counted over whole
+  paragraphs, so a code span that opens and closes on different lines still
+  shields its contents (and an unclosed code span is literal text); a run of
+  N backticks closes only on a run of exactly N. Unresolved bracket groups
+  stay literal, so an autolink inside them (`[<http://…>]`) still counts.
+  Images (`![alt](src)`), link definitions, and anything inside code spans
+  or fences are not links.
 - **Code blocks** — fenced blocks only (``` or ~~~), including fences the
   file never closes. A fence closes only on a run of the same character at
-  least as long as its opener. Indented (4-space) code blocks are not
-  detected, because list content is indistinguishable from them without a
-  full CommonMark parser.
+  least as long as its opener, and only inside the container that opened it:
+  a fence opened inside a blockquote ends when the blockquote does.
+  Indented (4-space) code blocks are not detected, because list content is
+  indistinguishable from them without a full CommonMark parser.
 
 The walker skips `.git` and `node_modules`, never follows symlinks, and
 returns files in bytewise sorted order, so the same tree always prints the
@@ -99,7 +105,7 @@ same table.
 ```console
 $ npm --prefix tools/md-stats install
 $ npm --prefix tools/md-stats run build   # tsc -> dist/
-$ npm --prefix tools/md-stats test        # vitest, 28 tests
+$ npm --prefix tools/md-stats test        # vitest, 33 tests
 $ npm --prefix tools/md-stats run lint    # eslint
 ```
 

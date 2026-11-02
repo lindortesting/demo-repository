@@ -32,6 +32,10 @@ function trackArrowKey(event, down) {
 
 window.addEventListener('keydown', (event) => trackArrowKey(event, true));
 window.addEventListener('keyup', (event) => trackArrowKey(event, false));
+window.addEventListener('blur', () => {
+  keys.left = false;
+  keys.right = false;
+});
 
 restartButton.addEventListener('click', () => {
   state = createGame(config);

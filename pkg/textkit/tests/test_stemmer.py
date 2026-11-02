@@ -241,3 +241,25 @@ def test_classify_is_linear_in_word_length():
     elapsed = time.perf_counter() - started
     assert result.startswith("y" * n)
     assert elapsed < 1.0, f"stem took {elapsed:.2f}s for n={n}"
+
+
+def test_step4_picks_longest_matching_suffix():
+    """Regression: when a word ends in several step-4 suffixes
+    (e.g. "agreement" ends in "ement" / "ment" / "ent"), step 4
+    commits to the longest matching suffix and never falls through
+    to a shorter one — even when its measure test fails. Otherwise
+    "agreement" would shrink to "agreem" by stripping "ent".
+    """
+    assert stem("agreement") == "agreement"
+    # "agreements" → strip plural s first, then "ement" still fails
+    # the measure test for the remaining "agreement"; end result is
+    # also "agreement".
+    assert stem("agreements") == "agreement"
+    assert stem("movement") == "movement"
+    # "replacement" matches the longest "ement" first and the
+    # measure test passes, so it strips down to "replace" and then
+    # step 5a trims the trailing e.
+    assert stem("replacement") == "replac"
+
+    # An -ion suffix still only fires when preceded by s or t.
+    assert stem("decision") == "decis"

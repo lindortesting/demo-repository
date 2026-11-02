@@ -161,14 +161,23 @@ def stem(word):
             n = len(w)
             break
 
-    for suf in _STEP_4:
+    # Step 4 must pick the longest matching suffix. When a word ends
+    # in several entries of the suffix list (e.g. "agreement" ends in
+    # "ement" / "ment" / "ent"), the algorithm commits to the longest
+    # match and never falls through to a shorter one — even when its
+    # measure test fails — so we iterate suffixes in descending length
+    # order and break on the first `endswith` hit.
+    for suf in sorted(_STEP_4, key=len, reverse=True):
         sl = len(suf)
-        if w.endswith(suf) and _measure(cls, n - sl) > 1:
-            if suf == "ion" and not (w[:n - sl].endswith("s") or w[:n - sl].endswith("t")):
-                continue
-            w = w[:n - sl]
-            cls = cls[:n - sl]
-            n -= sl
+        if w.endswith(suf):
+            if _measure(cls, n - sl) > 1:
+                if suf == "ion" and not (
+                    w[:n - sl].endswith("s") or w[:n - sl].endswith("t")
+                ):
+                    break
+                w = w[:n - sl]
+                cls = cls[:n - sl]
+                n -= sl
             break
 
     if w.endswith("e"):

@@ -58,6 +58,11 @@ type Store struct {
 
 // Open opens (creating if necessary) the WAL at path, replays it into a
 // fresh cache of the given capacity, and returns the ready Store.
+//
+// A WAL admits exactly one Store at a time: Open holds an exclusive
+// advisory lock on the file until Close, so a second Open of the same path —
+// from this or another process — fails instead of silently diverging (stale
+// offsets and unlogged deletes would corrupt both stores).
 func Open(path string, capacity int) (*Store, error) {
 	if capacity < 1 {
 		return nil, fmt.Errorf("kv: capacity must be positive, got %d", capacity)
@@ -65,6 +70,10 @@ func Open(path string, capacity int) (*Store, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err != nil {
 		return nil, err
+	}
+	if err := lockWAL(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("kv: wal %s is already open by another store: %w", path, err)
 	}
 	s := &Store{lru: newLRU(capacity), wal: f}
 	if err := s.replay(); err != nil {

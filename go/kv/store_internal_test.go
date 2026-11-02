@@ -8,6 +8,36 @@ import (
 
 var errBoom = errors.New("kv test: injected fault")
 
+// Requirement (regression for a review): a WAL has exactly one writer at a
+// time. A second Open of the same path must fail while the first store is
+// open and succeed after Close — two stores sharing one file diverge
+// silently (stale size offsets, unlogged deletes, cross-store truncation).
+// Skipped where the platform cannot enforce the lock.
+func TestStoreExclusiveWALOwnership(t *testing.T) {
+	if !ownershipEnforced {
+		t.Skip("exclusive WAL ownership is not enforced on this platform")
+	}
+	path := filepath.Join(t.TempDir(), "wal")
+	s, err := Open(path, 8)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := Open(path, 8); err == nil {
+		t.Fatal("second Open of the same WAL succeeded; want exclusive-ownership error")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	s2, err := Open(path, 8)
+	if err != nil {
+		t.Fatalf("Open after Close: %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+	if err := s2.Put("k", "v"); err != nil {
+		t.Fatalf("Put after reacquiring the WAL: %v", err)
+	}
+}
+
 // faultyFile injects failures into WAL operations to exercise error paths
 // that a real file cannot produce on demand.
 type faultyFile struct {

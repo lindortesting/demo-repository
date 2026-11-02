@@ -13,6 +13,7 @@ the log after a restart. `Store` is safe for concurrent use.
 |------------|-----------------------------------------------------------------|
 | `lru.go`   | The eviction policy: a pure, unsynchronized `lru` (map + doubly-linked list). No I/O. |
 | `store.go` | `Store`: the `lru` plus WAL persistence and a `sync.Mutex`.     |
+| `flock_*.go` | Exclusive WAL ownership: `flock(2)` where available, no-op elsewhere. |
 | `doc.go`   | Package documentation.                                          |
 
 ## Usage
@@ -68,13 +69,17 @@ larger inputs are rejected before anything is allocated or written.
 - **Growth:** the WAL is append-only and grows without bound — reads
   included. There is no compaction or snapshotting; operationally, rotate by
   writing a fresh WAL.
+- **Single writer:** a WAL admits one store at a time. `Open` holds an
+  exclusive advisory lock (`flock`) until `Close`; a second `Open` of the
+  same path — from this or another process — fails instead of silently
+  diverging. Not enforced on platforms without `flock(2)`.
 - **Concurrency:** a single mutex serializes everything (`Get` mutates
   recency, so a read-write lock would not help).
 
 ## Running the checks
 
 ```sh
-go test ./...            # 31 tests
+go test ./...            # 32 tests
 go test -race ./...      # includes TestStoreConcurrent
 go vet ./... && gofmt -l .
 go test -bench=. -benchmem ./...

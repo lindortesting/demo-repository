@@ -4,8 +4,10 @@
 //
 // Every mutation is appended to the WAL before it touches the cache, so Open
 // can rebuild the exact key-value state by replaying the log after a restart.
-// A Store is safe for concurrent use. The in-memory lru type is the pure
-// eviction policy with no I/O and no locking; Store adds both at the edges.
+// A Store is safe for concurrent use, and a WAL admits exactly one Store at a
+// time: Open holds an exclusive advisory lock (flock) until Close. The
+// in-memory lru type is the pure eviction policy with no I/O and no locking;
+// Store adds both at the edges.
 //
 // Durability: writes are unbuffered, so an acknowledged Put or Delete
 // survives a process crash. Surviving a power loss requires flushing the OS

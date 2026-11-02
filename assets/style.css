@@ -1,0 +1,246 @@
+:root {
+  --night: #2b1d3a;
+  --dusk: #3d2a52;
+  --cream: #fff4e2;
+  --paper: #fdf0dc;
+  --ink: #2b1d3a;
+  --pumpkin: #f28c38;
+  --gold: #f4c95d;
+  --rose: #ff7aa2;
+  --moon: 3.5rem;
+  --moon-at: 85% 8%;
+  --round: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand", "Segoe UI", system-ui, sans-serif;
+  --display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/*
+ * Vertical swipes scroll; horizontal swipes keep the pointer stream alive so
+ * touch users can paint (see brush.js). Nothing on the page scrolls sideways.
+ */
+html { color-scheme: dark; touch-action: pan-y pinch-zoom; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font: 1.0625rem/1.6 var(--round);
+  color: var(--cream);
+  background: var(--night);
+  overflow-x: hidden;
+}
+
+@media (pointer: fine) {
+  body.has-brush, body.has-brush * { cursor: none; }
+}
+
+/* night sky pinned behind everything so it never runs out on long pages */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at var(--moon-at), #fff8d6 0 var(--moon), #fff8d633 calc(var(--moon) + 1px), transparent calc(var(--moon) * 2.6)),
+    radial-gradient(ellipse at 50% 120%, #f28c3833, transparent 60%),
+    linear-gradient(var(--night), var(--dusk) 70%, #4a2f4f);
+}
+
+@media (max-width: 40rem) {
+  :root { --moon: 1.75rem; --moon-at: 88% 3.5%; }
+}
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ---------- brush cursor ---------- */
+
+.brush {
+  position: fixed;
+  inset: 0 auto auto 0;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s;
+  /* hotspot sits at the bristle tip: (2px, 55px) inside the 64px svg */
+  translate: calc(var(--x, -100px) - 2px) calc(var(--y, -100px) - 55px);
+}
+.brush.is-visible { opacity: 1; }
+.brush svg { display: block; transform-origin: 2px 55px; transition: transform .15s; }
+.brush.is-pressed svg { transform: rotate(-12deg) scale(.92); }
+.brush-handle { fill: #c98a5b; stroke: var(--night); stroke-width: 2; }
+.brush-ferrule { fill: #d9d4e6; stroke: var(--night); stroke-width: 2; }
+.brush-tip { fill: var(--tip, var(--pumpkin)); stroke: var(--night); stroke-width: 2; transition: fill .3s; }
+
+.pumpkin-particle {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ---------- layout ---------- */
+
+.hero, main, footer {
+  width: min(68rem, 100% - 2.5rem);
+  margin-inline: auto;
+}
+
+.hero {
+  padding: clamp(4rem, 14vh, 8rem) 0 3rem;
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: .85rem;
+  letter-spacing: .25em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.1; }
+
+h1 {
+  margin: .4em 0 .3em;
+  font-size: clamp(3rem, 11vw, 7rem);
+  letter-spacing: -.02em;
+}
+h1 span {
+  display: inline-block;
+  font-style: italic;
+  color: var(--pumpkin);
+  rotate: -4deg;
+  text-shadow: .07em .07em 0 var(--rose);
+}
+
+.lede {
+  max-width: 34rem;
+  margin: 0 auto 2rem;
+  font-size: 1.2rem;
+  color: #f3e2ff;
+}
+
+.hint {
+  display: inline-block;
+  margin: 0;
+  padding: .55em 1.2em;
+  border: 2px dashed #f4c95d88;
+  border-radius: 999px;
+  font-size: .9rem;
+  color: var(--gold);
+}
+.hint-touch { display: none; }
+@media (pointer: coarse) {
+  .hint-mouse { display: none; }
+  .hint-touch { display: inline; }
+}
+
+h2 {
+  margin: 0 0 1.5rem;
+  font-size: clamp(1.8rem, 5vw, 2.6rem);
+  text-align: center;
+}
+
+section { padding: 3rem 0; }
+
+/* ---------- gallery ---------- */
+
+.patch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+  gap: 1.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  padding: 1.5rem 1.25rem 1.25rem;
+  border-radius: 1.5rem 1.75rem 1.4rem 1.9rem;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: center;
+  box-shadow: .4rem .5rem 0 var(--p);
+  rotate: var(--tilt);
+  transition: rotate .3s, translate .3s;
+}
+.card:hover { rotate: 0deg; translate: 0 -.4rem; }
+.card h3 { margin: .5rem 0 .25rem; font-size: 1.35rem; }
+.card p { margin: 0; font-size: .95rem; color: #5a4a68; }
+
+.gourd {
+  display: block;
+  width: 7.5rem;
+  height: 7.5rem;
+  margin: 0 auto;
+  color: var(--p);
+}
+.gourd-tall { scale: .85 1.08; }
+.gourd-squat { scale: 1.12 .85; }
+.card:hover .gourd { animation: wobble .6s ease-in-out; }
+
+@keyframes wobble {
+  25% { rotate: -8deg; }
+  75% { rotate: 6deg; }
+}
+
+/* ---------- studio ---------- */
+
+.studio {
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.steps {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.steps li {
+  position: relative;
+  padding: 1rem 1.25rem 1rem 4rem;
+  border-radius: 1.25rem;
+  background: #ffffff10;
+  counter-increment: step;
+}
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  background: var(--pumpkin);
+  color: var(--night);
+  font: 700 1.1rem var(--display);
+}
+.steps strong { color: var(--gold); }
+
+.note {
+  margin: 1.75rem 0 0;
+  text-align: center;
+  font-style: italic;
+  color: #e4d2f2;
+}
+
+footer {
+  padding: 3rem 0 2.5rem;
+  text-align: center;
+  font-size: .9rem;
+  color: #cdb8e0;
+}
+footer p { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .card:hover { rotate: none; translate: none; transition: none; }
+  .card:hover .gourd { animation: none; }
+}

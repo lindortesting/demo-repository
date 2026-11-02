@@ -10,16 +10,30 @@ _VOWELS = frozenset("aeiou")
 
 
 def _cons(word, i):
-    if word[i] == "y":
-        return i > 0 and _cons(word, i - 1)
-    return word[i] not in _VOWELS
+    """Return True if ``word[i]`` is a consonant for Porter's measure.
+
+    ``y`` is treated as a vowel when preceded by another consonant, as a
+    consonant at the start of the word, and as a consonant when preceded
+    by a vowel. The function walks past any preceding ``y`` run iteratively
+    so input length cannot drive the call stack to its limit.
+    """
+    if word[i] != "y":
+        return word[i] not in _VOWELS
+    j = i - 1
+    while j >= 0 and word[j] == "y":
+        j -= 1
+    if j < 0:
+        return True
+    return word[j] in _VOWELS
 
 
 def _measure(stem):
-    m = prev_vowel = 0
+    """Return the Porter measure: the number of vowel-to-consonant runs."""
+    m = 0
+    prev_vowel = False
     for i in range(len(stem)):
         vowel = not _cons(stem, i)
-        if vowel and not prev_vowel:
+        if not vowel and prev_vowel:
             m += 1
         prev_vowel = vowel
     return m
@@ -91,8 +105,9 @@ def stem(word):
     elif w.endswith("s"):
         w = w[:-1]
 
-    if w.endswith("eed") and _measure(w[:-3]) > 0:
-        w = w[:-1]
+    if w.endswith("eed"):
+        if _measure(w[:-3]) > 0:
+            w = w[:-1]
     elif w.endswith("ed") and _has_vowel(w[:-2]):
         w = _step1b_cleanup(w[:-2])
     elif w.endswith("ing") and _has_vowel(w[:-3]):

@@ -20,9 +20,9 @@ dependencies = []
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["textkit*"]
+[tool.setuptools]
+packages = ["textkit"]
+package-dir = { textkit = "." }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

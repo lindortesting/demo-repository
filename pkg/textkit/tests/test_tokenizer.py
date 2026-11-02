@@ -242,3 +242,91 @@ def test_sentences_breaks_on_unicode_capital_letter():
     assert tokenize_sentences(
         "\u041f\u0440\u0438\u0432\u0435\u0442. \u041a\u0430\u043a \u0434\u0435\u043b\u0430?"
     ) == ["\u041f\u0440\u0438\u0432\u0435\u0442.", "\u041a\u0430\u043a \u0434\u0435\u043b\u0430?"]
+
+
+# ---------- Regression tests for encoder-bug fixes ---------------------
+
+def test_sentences_opening_quote_after_whitespace_belongs_to_next():
+    """Regression: an opening quote that appears *after* inter-sentence
+    whitespace must stay with the next sentence, not be swept into the
+    prior sentence's slice.
+    """
+    assert tokenize_sentences('One. "Two."') == ['One.', '"Two."']
+
+
+def test_sentences_lowercase_accented_letter_is_not_a_boundary():
+    """é (U+00E9) is lowercase Latin Extended and must not trigger a
+    sentence break; the pre-fix block regex admitted lowercase entries.
+    """
+    assert tokenize_sentences("Wait... élan is needed.") == [
+        "Wait... élan is needed.",
+    ]
+
+
+def test_sentences_lowercase_greek_letter_is_not_a_boundary():
+    """The Greek block in the pre-fix regex also admitted lowercase
+    letters (e.g. α at U+03B1 should not break a sentence).
+    """
+    assert tokenize_sentences("Wait... α is greek.") == [
+        "Wait... α is greek.",
+    ]
+
+
+def test_sentences_closing_and_opening_quotes_split_correctly():
+    """A closing quote immediately after the terminator belongs to the
+    prior sentence; an opening quote belonging to the next sentence
+    follows whitespace.
+    """
+    assert tokenize_sentences('"Hello." World.') == [
+        '"Hello."', "World.",
+    ]
+
+
+# ---------- Regression tests for reviewer-flagged bugs -----------------
+
+def test_words_nfd_normalizes_to_nfc():
+    """Regression: ``'nai\u0308ve'`` (NFD: i + combining diaeresis)
+    must tokenize as one word. NFC-normalizing the input collapses the
+    combining marks so the existing letter-class regex matches them
+    as a single character.
+    """
+    assert tokenize_words("nai\u0308ve") == ["naïve"]
+    # Multiple decomposed words in one input.
+    assert tokenize_words("nai\u0308ve cafe\u0301 re\u0301sume\u0301") == [
+        "naïve", "café", "résumé",
+    ]
+    # Precomposed (NFC) input is unchanged by the normalization step.
+    assert tokenize_words("naïve café résumé") == [
+        "naïve", "café", "résumé",
+    ]
+
+
+def test_sentences_split_after_question_mark_with_single_initial():
+    """Regression: a single uppercase letter preceding ``?``/``!`` is
+    not a name-initial boundary; those guards only apply to ``.``.
+    Without the guard, ``text[i] in {., !, ?}`` would suppress ``?``
+    splits and merge ``Who am I?`` with the following sentence.
+    """
+    assert tokenize_sentences("Who am I? Nobody knows.") == [
+        "Who am I?",
+        "Nobody knows.",
+    ]
+    # ``!`` is also a sentence terminator.
+    assert tokenize_sentences("Wow! Really? Hmm.") == [
+        "Wow!",
+        "Really?",
+        "Hmm.",
+    ]
+
+
+def test_sentences_initial_guard_still_fires_for_period():
+    """Backwards-compat: the abbreviation/initial guards still apply
+    to ``.`` so ``Mr.``/``Dr.``/initials like ``J. R. R.`` don't break.
+    """
+    assert tokenize_sentences("Mr. Smith arrived. He was tired.") == [
+        "Mr. Smith arrived.",
+        "He was tired.",
+    ]
+    assert tokenize_sentences("J. R. R. Tolkien wrote it.") == [
+        "J. R. R. Tolkien wrote it.",
+    ]

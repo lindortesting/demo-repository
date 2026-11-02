@@ -6,6 +6,7 @@ Public API:
 """
 
 import re
+import unicodedata
 
 # ---------- Word / number tokens ------------------------------------
 
@@ -28,8 +29,13 @@ _TOKEN = re.compile(rf"(?:{_WORD.pattern})|(?:{_NUMBER.pattern})", re.UNICODE)
 
 
 def tokenize_words(text: str) -> list[str]:
-    """Return the word and number tokens of ``text`` in order."""
-    return _TOKEN.findall(text)
+    """Return the word and number tokens of ``text`` in order.
+
+    ``text`` is first normalized to Unicode NFC so a single word
+    composed in NFD (``'nai\u0308ve'`` rather than ``'na\u00efve'``)
+    still tokenizes as one word.
+    """
+    return _TOKEN.findall(unicodedata.normalize("NFC", text))
 
 
 # ---------- Sentence tokenization ------------------------------------
@@ -48,14 +54,6 @@ _SENTENCE_END = ".!?"
 
 _CLOSE = frozenset('"\'\u2019\u201D\u201C\u2018)]\u300D\u3009\u300B')
 
-# Capital letters across Latin (basic + extended), Greek,
-# Cyrillic, Armenian, and fullwidth Latin.
-_CAPITAL = re.compile(
-    r"[A-Z\u00C0-\u024F\u0370-\u03FF\u0400-\u042F"
-    r"\u0531-\u0556\uFF21-\uFF3A]",
-    re.UNICODE,
-)
-
 
 def tokenize_sentences(text: str) -> list[str]:
     """Return the sentences of ``text``.
@@ -63,8 +61,7 @@ def tokenize_sentences(text: str) -> list[str]:
     Breaks at ``.``, ``!``, ``?`` whose preceding alphabetic run
     is not a known abbreviation and not a single all-uppercase
     letter (a name-initial), and whose next non-whitespace,
-    non-closing-quote character is a capital letter in Latin,
-    Greek, Cyrillic, Armenian, or fullwidth Latin.
+    non-closing-quote character is an uppercase letter (any script).
     """
     if not isinstance(text, str):
         raise TypeError("text must be str")
@@ -78,19 +75,29 @@ def tokenize_sentences(text: str) -> list[str]:
     while i < n:
         if text[i] in _SENTENCE_END:
             preceding = _word_at(text, i - 1, start)
-            if preceding.lower() in _ABBREVIATIONS:
+            if (
+                text[i] == "."
+                and (
+                    preceding.lower() in _ABBREVIATIONS
+                    or (len(preceding) == 1 and preceding.isupper())
+                )
+            ):
                 i += 1
                 continue
-            if len(preceding) == 1 and preceding.isupper():
-                i += 1
-                continue
-            j = _skip_graphical(text, i + 1)
-            if j < n and _CAPITAL.match(text[j]):
-                sentence = text[start:j].rstrip()
+            j = i + 1
+            while j < n and text[j] in _CLOSE:
+                j += 1
+            while j < n and text[j].isspace():
+                j += 1
+            boundary = j
+            while j < n and text[j] in _CLOSE:
+                j += 1
+            if j < n and text[j].isupper():
+                sentence = text[start:boundary].rstrip()
                 if sentence:
                     sentences.append(sentence)
-                start = j
-                i = j
+                start = boundary
+                i = boundary
                 continue
         i += 1
 
@@ -108,9 +115,4 @@ def _word_at(text: str, i: int, start: int) -> str:
     return text[i + 1:end]
 
 
-def _skip_graphical(text: str, j: int) -> int:
-    """Advance ``j`` past whitespace and closing-quote characters."""
-    n = len(text)
-    while j < n and (text[j].isspace() or text[j] in _CLOSE):
-        j += 1
-    return j
+

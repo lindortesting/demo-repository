@@ -9,64 +9,75 @@ stripping." Program 14(3), July 1980, pages 130-137.
 _VOWELS = frozenset("aeiou")
 
 
-def _cons(word, i):
-    """Return True if ``word[i]`` is a consonant for Porter's measure.
+def _classify(word):
+    """Consonant/vowel classification for every position in ``word``.
 
-    ``y`` is treated as a vowel when preceded by another consonant, as a
-    consonant at the start of the word, and as a consonant when preceded
-    by a vowel. The function walks past any preceding ``y`` run iteratively
-    so input length cannot drive the call stack to its limit.
+    Porter's rule for ``y``: consonant at the start of the word,
+    consonant after a vowel, vowel after a consonant. The whole
+    array is built in a single forward pass so a long ``y`` run
+    (e.g. 100_000 contiguous ``y``s) is handled in O(n); repeated
+    measure/scvc/double checks then look up each class in O(1).
     """
-    if word[i] != "y":
-        return word[i] not in _VOWELS
-    j = i - 1
-    while j >= 0 and word[j] == "y":
-        j -= 1
-    if j < 0:
-        return True
-    return word[j] in _VOWELS
+    n = len(word)
+    classes = [False] * n
+    for i, ch in enumerate(word):
+        if ch != "y":
+            classes[i] = ch not in _VOWELS
+        elif i == 0:
+            classes[i] = True
+        elif word[i - 1] == "y":
+            classes[i] = classes[i - 1]
+        else:
+            classes[i] = word[i - 1] in _VOWELS
+    return classes
 
 
-def _measure(stem):
-    """Return the Porter measure: the number of vowel-to-consonant runs."""
+def _measure(cls, end):
+    """Porter measure of ``word[:end]`` using precomputed ``cls``."""
     m = 0
-    prev_vowel = False
-    for i in range(len(stem)):
-        vowel = not _cons(stem, i)
-        if not vowel and prev_vowel:
+    prev_vowel = None
+    for i in range(end):
+        is_vowel = not cls[i]
+        if prev_vowel is not None and prev_vowel and not is_vowel:
             m += 1
-        prev_vowel = vowel
+        prev_vowel = is_vowel
     return m
 
 
-def _has_vowel(stem):
-    return any(not _cons(stem, i) for i in range(len(stem)))
+def _has_vowel(cls, end):
+    for i in range(end):
+        if not cls[i]:
+            return True
+    return False
 
 
-def _double(stem):
-    n = len(stem)
-    return n >= 2 and stem[-1] == stem[-2] and _cons(stem, n - 1)
+def _double(word, cls, end):
+    return (
+        end >= 2
+        and word[end - 1] == word[end - 2]
+        and cls[end - 1]
+    )
 
 
-def _cvc_short(stem):
-    n = len(stem)
-    if n < 3 or not _cons(stem, n - 3) or _cons(stem, n - 2) or not _cons(stem, n - 1):
+def _cvc_short(word, cls, end):
+    if end < 3 or not cls[end - 3] or cls[end - 2] or not cls[end - 1]:
         return False
-    return stem[-1] not in "wxy"
+    return word[end - 1] not in "wxy"
 
 
-def _step1b_cleanup(stem):
-    if stem.endswith("at"):
-        return stem[:-2] + "ate"
-    if stem.endswith("bl"):
-        return stem[:-2] + "ble"
-    if stem.endswith("iz"):
-        return stem[:-2] + "ize"
-    if _measure(stem) == 1 and _cvc_short(stem):
-        return stem + "e"
-    if _double(stem) and stem[-1] not in "lsz":
-        return stem[:-1]
-    return stem
+def _step1b_cleanup(word, cls, end):
+    """Apply the post-strip cleanup rules and return ``(w, new_end)``."""
+    if word[end - 2:end] == "at":
+        return word[:end - 2] + "ate", end - 2 + 3
+    if word[end - 2:end] == "bl":
+        return word[:end - 2] + "ble", end - 2 + 3
+    if word[end - 2:end] == "iz":
+        return word[:end - 2] + "ize", end - 2 + 3
+    if _measure(cls, end) == 1 and _cvc_short(word, cls, end):
+        return word[:end] + "e", end + 1
+    if _double(word, cls, end) and word[end - 1] not in "lsz":
+        return word[:end - 1], end - 1
+    return word[:end], end
 
 
 _STEP_2 = (
@@ -95,53 +106,82 @@ def stem(word):
     if len(word) <= 2:
         return word
     w = word.lower()
+    n = len(w)
+    cls = _classify(w)
 
     if w.endswith("sses"):
-        w = w[:-2]
+        n -= 2
+        w = w[:n]
+        cls = cls[:n]
     elif w.endswith("ies"):
-        w = w[:-2]
+        n -= 2
+        w = w[:n]
+        cls = cls[:n]
     elif w.endswith("ss"):
         pass
     elif w.endswith("s"):
-        w = w[:-1]
+        n -= 1
+        w = w[:n]
+        cls = cls[:n]
 
     if w.endswith("eed"):
-        if _measure(w[:-3]) > 0:
-            w = w[:-1]
-    elif w.endswith("ed") and _has_vowel(w[:-2]):
-        w = _step1b_cleanup(w[:-2])
-    elif w.endswith("ing") and _has_vowel(w[:-3]):
-        w = _step1b_cleanup(w[:-3])
+        if _measure(cls, n - 3) > 0:
+            n -= 1
+            w = w[:n]
+            cls = cls[:n]
+    elif w.endswith("ed") and _has_vowel(cls, n - 2):
+        n -= 2
+        w = w[:n]
+        cls = cls[:n]
+        w, n = _step1b_cleanup(w, cls, n)
+    elif w.endswith("ing") and _has_vowel(cls, n - 3):
+        n -= 3
+        w = w[:n]
+        cls = cls[:n]
+        w, n = _step1b_cleanup(w, cls, n)
 
-    if w.endswith("y") and _has_vowel(w[:-1]):
-        w = w[:-1] + "i"
+    if w.endswith("y") and _has_vowel(cls, n - 1):
+        w = w[:n - 1] + "i"
+        cls = cls[:n - 1] + [False]
+        n -= 0
 
     for suf, repl in _STEP_2:
-        n = len(suf)
-        if w.endswith(suf) and _measure(w[:-n]) > 0:
-            w = w[:-n] + repl
+        sl = len(suf)
+        if w.endswith(suf) and _measure(cls, n - sl) > 0:
+            w = w[:n - sl] + repl
+            cls = cls[:n - sl] + [ch not in _VOWELS for ch in repl]
+            n = len(w)
             break
 
     for suf, repl in _STEP_3:
-        n = len(suf)
-        if w.endswith(suf) and _measure(w[:-n]) > 0:
-            w = w[:-n] + repl
+        sl = len(suf)
+        if w.endswith(suf) and _measure(cls, n - sl) > 0:
+            w = w[:n - sl] + repl
+            cls = cls[:n - sl] + [ch not in _VOWELS for ch in repl]
+            n = len(w)
             break
 
     for suf in _STEP_4:
-        n = len(suf)
-        if w.endswith(suf) and _measure(w[:-n]) > 1:
-            if suf == "ion" and not (w[:-n].endswith("s") or w[:-n].endswith("t")):
+        sl = len(suf)
+        if w.endswith(suf) and _measure(cls, n - sl) > 1:
+            if suf == "ion" and not (w[:n - sl].endswith("s") or w[:n - sl].endswith("t")):
                 continue
-            w = w[:-n]
+            w = w[:n - sl]
+            cls = cls[:n - sl]
+            n -= sl
             break
 
     if w.endswith("e"):
-        base = w[:-1]
-        if _measure(base) > 1 or (_measure(base) == 1 and not _cvc_short(base)):
-            w = base
+        if _measure(cls, n - 1) > 1 or (
+            _measure(cls, n - 1) == 1 and not _cvc_short(w, cls, n - 1)
+        ):
+            n -= 1
+            w = w[:n]
+            cls = cls[:n]
 
-    if _double(w) and _measure(w[:-1]) > 1 and w.endswith("l"):
-        w = w[:-1]
+    if _double(w, cls, n) and _measure(cls, n - 1) > 1 and w.endswith("l"):
+        n -= 1
+        w = w[:n]
+        cls = cls[:n]
 
     return w

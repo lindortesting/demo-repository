@@ -184,20 +184,24 @@ def test_y_is_vowel_after_consonant_unblocks_ing_strip():
 
 def test_y_is_consonant_at_start_and_after_vowel():
     """Regression: initial ``y`` and ``y`` preceded by a vowel are both
-    consonants, encoded non-recursively in ``_cons``.
+    consonants, encoded non-recursively in ``_classify``.
     """
-    from stemmer import _cons
+    from stemmer import _classify
+    # Each entry is True when the corresponding character is a consonant.
     # Initial y: consonant.
-    assert _cons("y", 0) is True
-    assert _cons("yacht", 0) is True
+    assert _classify("y") == [True]
+    assert _classify("yacht") == [True, False, True, True, True]
     # y after a vowel: consonant.
-    assert _cons("boy", 2) is True
-    assert _cons("hay", 2) is True
+    assert _classify("boy") == [True, False, True]
+    assert _classify("hay") == [True, False, True]
     # y after a consonant: vowel (so the syllable counts).
-    assert _cons("cry", 2) is False
-    assert _cons("sky", 2) is False
-    # Long all-y runs: the lookback must not consume the call stack.
-    assert _cons("y" * 5000, 4999) is True
+    assert _classify("cry") == [True, True, False]
+    assert _classify("sky") == [True, True, False]
+    # Long all-y runs: the array build is a single forward pass so a
+    # 5000-y input does not consume the call stack or wall-clock time.
+    long_cls = _classify("y" * 5000)
+    assert len(long_cls) == 5000
+    assert all(c is True for c in long_cls)
 
 
 def test_cons_is_iterative_for_long_y_runs():
@@ -210,3 +214,30 @@ def test_cons_is_iterative_for_long_y_runs():
     result = stem(long_word)
     assert isinstance(result, str)
     assert result.startswith("y" * 5000)
+
+
+def test_classify_is_linear_in_word_length():
+    """Regression: classifying a long all-y word is O(n), not O(n**2).
+
+    The pre-fix implementation called ``_cons`` per position and each
+    ``_cons`` call walked back through every preceding ``y``, giving
+    O(n**2) total work; ~100_000 ``y`` characters took minutes.
+    """
+    import time
+    from stemmer import _classify
+    n = 100_000
+    started = time.perf_counter()
+    cls = _classify("y" * n + "e")
+    elapsed = time.perf_counter() - started
+    assert len(cls) == n + 1
+    assert all(c is True for c in cls[:n])
+    # Generous bound: a linear pass over 100k chars should stay well
+    # under one second on any reasonable machine.
+    assert elapsed < 1.0, f"_classify took {elapsed:.2f}s for n={n}"
+
+    # And stem() itself must be similarly fast on the same input.
+    started = time.perf_counter()
+    result = stem("y" * n + "e")
+    elapsed = time.perf_counter() - started
+    assert result.startswith("y" * n)
+    assert elapsed < 1.0, f"stem took {elapsed:.2f}s for n={n}"

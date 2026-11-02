@@ -180,6 +180,27 @@ describe("parseMarkdown", () => {
     expect(parseMarkdown("[<http://a.example>]").links).toBe(1);
   });
 
+  it("keeps the unresolved second group of a fallback shortcut reference countable", () => {
+    // Regression: when [foo][<http://a.example>] fell back to the shortcut
+    // (foo defined, the second label not), the whole match was replaced and
+    // the autolink inside the unresolved second group was dropped.
+    expect(parseMarkdown("[foo][<http://a.example>]\n\n[foo]: /url").links).toBe(2);
+    // With nothing defined the whole match stays literal.
+    expect(parseMarkdown("[bar][<http://a.example>]").links).toBe(1);
+  });
+
+  it("strips code spans in linear time", () => {
+    // Requirement: span stripping must be linear in the number of backtick
+    // runs. The previous implementation rescanned the run list from the
+    // start for every opener — a paragraph of 50,000 closed one-backtick
+    // spans meant billions of predicate checks and a multi-second stall;
+    // this must stay far inside the test timeout, with every span's URL
+    // still stripped.
+    const s = parseMarkdown("`http://x.example` ".repeat(50_000));
+    expect(s.words).toBe(50_000);
+    expect(s.links).toBe(0);
+  });
+
   it("does not close a short code span with a longer backtick run", () => {
     // Regression: the span regex let a 1-backtick opener match the first
     // backtick of a 2-backtick run, wrongly swallowing the URL.

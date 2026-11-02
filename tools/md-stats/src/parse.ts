@@ -151,19 +151,29 @@ function countMatches(text: string, re: RegExp): number {
  * backticks closes only on a maximal run of exactly N — a longer run does
  * not close a shorter opener — and an opener without any closer is literal
  * text, so calls are safe per block with no state carried between them.
+ * Linear time: one backward pass precomputes each run's next same-length
+ * run, so pairing an opener with its closer is a single lookup.
  */
 function stripCodeSpans(text: string): string {
   const runs = [...text.matchAll(SPAN_RUN)].map((m) => ({
     at: m.index ?? 0,
     ticks: m[1]?.length ?? 0,
   }));
+  // nextSame[i]: index of the first run after i with the same tick count.
+  const nextSame: number[] = [];
+  const lastSeen = new Map<number, number>();
+  for (let j = runs.length - 1; j >= 0; j--) {
+    const ticks = runs[j]?.ticks ?? -1;
+    nextSame[j] = lastSeen.get(ticks) ?? -1;
+    lastSeen.set(ticks, j);
+  }
   let out = "";
   let cursor = 0;
   let i = 0;
   while (i < runs.length) {
     const opener = runs[i];
     if (!opener) break;
-    const close = runs.findIndex((r, j) => j > i && r.ticks === opener.ticks);
+    const close = nextSame[i] ?? -1;
     if (close === -1) {
       i++;
       continue;
@@ -181,12 +191,13 @@ function countLinks(text: string, defs: Set<string>): number {
   t = t.replaceAll(INLINE_LINK, " ");
   let refs = 0;
   t = t.replace(REFERENCE, (match, label: string, ref: string | undefined) => {
-    const name = norm(label);
-    const defined =
-      ref === undefined ? defs.has(name) : defs.has(norm(ref)) || defs.has(name);
-    if (!defined) return match; // stays literal: autolinks inside remain countable
+    const full = ref !== undefined && defs.has(norm(ref));
+    const shortcut = defs.has(norm(label));
+    if (!full && !shortcut) return match; // literal: autolinks inside remain countable
     refs++;
-    return " ";
+    // A fallback shortcut consumes only its first group; the unresolved
+    // second group stays literal so autolinks inside it still count.
+    return ref !== undefined && !full ? ` [${ref}]` : " ";
   });
   count += refs + countMatches(t, AUTOLINK);
   return count + countMatches(t.replaceAll(AUTOLINK, " "), BARE_URL);

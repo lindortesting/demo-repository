@@ -1,0 +1,26 @@
+{
+  "name": "md-stats",
+  "version": "1.0.0",
+  "description": "Print word, heading, link and code-block statistics for Markdown files",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "md-stats": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.13.0",
+    "eslint": "^9.20.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^3.0.0"
+  }
+}
